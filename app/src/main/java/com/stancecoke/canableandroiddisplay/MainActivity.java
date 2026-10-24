@@ -204,11 +204,14 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private File createSessionLogFile() {
-        File baseDir = getExternalFilesDir(null);
-        File logDir = baseDir != null ? new File(baseDir, "Canable") : new File(getFilesDir(), "Canable");
+        File dir = getExternalFilesDir(null);
+        if (dir == null) {
+            dir = getFilesDir();
+        }
 
+        File logDir = new File(dir, "Canable");
         if (!logDir.exists() && !logDir.mkdirs()) {
-            logDir = getFilesDir();
+            logDir = dir;
         }
 
         String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmssSSS", Locale.US).format(new Date());
