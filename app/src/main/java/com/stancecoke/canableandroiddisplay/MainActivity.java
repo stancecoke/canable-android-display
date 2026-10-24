@@ -23,8 +23,15 @@ import com.androidcan.CanDeviceInfo;
 import com.androidcan.CanFrame;
 import com.androidcan.ReceivedFrame;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "CanableDisplay";
@@ -181,6 +188,7 @@ public class MainActivity extends AppCompatActivity {
         int ch4 = decodeInt16(frame.data[6], frame.data[7]);
 
         String raw = toHex(frame.data);
+        writeChannelSnapshot(ch1, ch2, ch3, ch4, raw);
 
         runOnUiThread(() -> {
             tvFrameId.setText("ID: 0x" + Integer.toHexString(frame.id).toUpperCase());
@@ -191,6 +199,36 @@ public class MainActivity extends AppCompatActivity {
             tvRaw.setText("Payload: " + raw);
             tvStatus.setText("Receiving 0x00010203");
         });
+    }
+
+    private void writeChannelSnapshot(int ch1, int ch2, int ch3, int ch4, String raw) {
+        try {
+            File dir = getExternalFilesDir(null);
+            if (dir == null) {
+                dir = getFilesDir();
+            }
+
+            String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmssSSS", Locale.US).format(new Date());
+            File file = new File(dir, "ch1_ch4_" + timestamp + ".txt");
+
+            String line = String.format(
+                    Locale.US,
+                    "%s, Ch1=%d, Ch2=%d, Ch3=%d, Ch4=%d, Raw=%s\n",
+                    timestamp,
+                    ch1,
+                    ch2,
+                    ch3,
+                    ch4,
+                    raw
+            );
+
+            try (FileOutputStream fos = new FileOutputStream(file, true);
+                 OutputStreamWriter writer = new OutputStreamWriter(fos, StandardCharsets.UTF_8)) {
+                writer.append(line);
+            }
+        } catch (IOException e) {
+            Log.e(TAG, "Failed to write channel data", e);
+        }
     }
 
     private static int decodeInt16(byte hi, byte lo) {
