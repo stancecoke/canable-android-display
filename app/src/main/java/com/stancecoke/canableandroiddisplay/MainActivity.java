@@ -9,6 +9,7 @@ import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.util.Log;
 import android.widget.Button;
 import android.widget.TextView;
@@ -189,8 +190,7 @@ public class MainActivity extends AppCompatActivity {
         int ch3 = decodeInt16(frame.data[4], frame.data[5]);
         int ch4 = decodeInt16(frame.data[6], frame.data[7]);
 
-        String raw = toHex(frame.data);
-        writeChannelSnapshot(ch1, ch2, ch3, ch4, raw);
+        writeChannelSnapshot(ch1, ch2, ch3, ch4);
 
         runOnUiThread(() -> {
             tvFrameId.setText("ID: 0x" + Integer.toHexString(frame.id).toUpperCase());
@@ -198,31 +198,35 @@ public class MainActivity extends AppCompatActivity {
             tvCh2.setText("Ch2: " + ch2);
             tvCh3.setText("Ch3: " + ch3);
             tvCh4.setText("Ch4: " + ch4);
-            tvRaw.setText("Payload: " + raw);
             tvStatus.setText("Receiving 0x00010203");
         });
     }
 
     private File createSessionLogFile() {
-        File dir = getExternalFilesDir(null);
-        if (dir == null) {
-            dir = getFilesDir();
+        File dir = new File(Environment.getExternalStorageDirectory(), "Canable");
+        if (!dir.exists() && !dir.mkdirs()) {
+            dir = getExternalFilesDir(null);
+            if (dir == null) {
+                dir = getFilesDir();
+            }
         }
 
         String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmssSSS", Locale.US).format(new Date());
-        File file = new File(dir, "can_ch1_ch4_" + timestamp + ".txt");
+        File file = new File(dir, "can_ch1_ch4_" + timestamp + ".csv");
 
         try (FileOutputStream fos = new FileOutputStream(file, true);
              OutputStreamWriter writer = new OutputStreamWriter(fos, StandardCharsets.UTF_8)) {
-            writer.append("timestamp,Ch1,Ch2,Ch3,Ch4,Raw\n");
+            writer.append("timestamp,Ch1,Ch2,Ch3,Ch4\n");
         } catch (IOException e) {
             Log.e(TAG, "Failed to create session log file", e);
+            File fallbackDir = getFilesDir();
+            return new File(fallbackDir, "can_ch1_ch4_" + timestamp + ".csv");
         }
 
         return file;
     }
 
-    private void writeChannelSnapshot(int ch1, int ch2, int ch3, int ch4, String raw) {
+    private void writeChannelSnapshot(int ch1, int ch2, int ch3, int ch4) {
         if (channelLogFile == null) {
             channelLogFile = createSessionLogFile();
         }
@@ -232,13 +236,12 @@ public class MainActivity extends AppCompatActivity {
             String timestamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(new Date());
             writer.append(String.format(
                     Locale.US,
-                    "%s,%d,%d,%d,%d,%s\n",
+                    "%s,%d,%d,%d,%d\n",
                     timestamp,
                     ch1,
                     ch2,
                     ch3,
-                    ch4,
-                    raw
+                    ch4
             ));
         } catch (IOException e) {
             Log.e(TAG, "Failed to write channel data", e);
@@ -251,16 +254,5 @@ public class MainActivity extends AppCompatActivity {
             value -= 0x10000;
         }
         return value;
-    }
-
-    private static String toHex(byte[] data) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < data.length; i++) {
-            sb.append(String.format("%02X", data[i] & 0xFF));
-            if (i < data.length - 1) {
-                sb.append(' ');
-            }
-        }
-        return sb.toString();
     }
 }
