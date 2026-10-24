@@ -41,6 +41,7 @@ public class MainActivity extends AppCompatActivity {
 
     private UsbManager usbManager;
     private CanDevice canDevice;
+    private File channelLogFile;
 
     private TextView tvStatus;
     private TextView tvFrameId;
@@ -76,6 +77,7 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
+        channelLogFile = createSessionLogFile();
 
         tvStatus = findViewById(R.id.tvStatus);
         tvFrameId = findViewById(R.id.tvFrameId);
@@ -201,31 +203,43 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
+    private File createSessionLogFile() {
+        File dir = getExternalFilesDir(null);
+        if (dir == null) {
+            dir = getFilesDir();
+        }
+
+        String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmssSSS", Locale.US).format(new Date());
+        File file = new File(dir, "can_ch1_ch4_" + timestamp + ".txt");
+
+        try (FileOutputStream fos = new FileOutputStream(file, true);
+             OutputStreamWriter writer = new OutputStreamWriter(fos, StandardCharsets.UTF_8)) {
+            writer.append("timestamp,Ch1,Ch2,Ch3,Ch4,Raw\n");
+        } catch (IOException e) {
+            Log.e(TAG, "Failed to create session log file", e);
+        }
+
+        return file;
+    }
+
     private void writeChannelSnapshot(int ch1, int ch2, int ch3, int ch4, String raw) {
-        try {
-            File dir = getExternalFilesDir(null);
-            if (dir == null) {
-                dir = getFilesDir();
-            }
+        if (channelLogFile == null) {
+            channelLogFile = createSessionLogFile();
+        }
 
-            String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmssSSS", Locale.US).format(new Date());
-            File file = new File(dir, "ch1_ch4_" + timestamp + ".txt");
-
-            String line = String.format(
+        try (FileOutputStream fos = new FileOutputStream(channelLogFile, true);
+             OutputStreamWriter writer = new OutputStreamWriter(fos, StandardCharsets.UTF_8)) {
+            String timestamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(new Date());
+            writer.append(String.format(
                     Locale.US,
-                    "%s, Ch1=%d, Ch2=%d, Ch3=%d, Ch4=%d, Raw=%s\n",
+                    "%s,%d,%d,%d,%d,%s\n",
                     timestamp,
                     ch1,
                     ch2,
                     ch3,
                     ch4,
                     raw
-            );
-
-            try (FileOutputStream fos = new FileOutputStream(file, true);
-                 OutputStreamWriter writer = new OutputStreamWriter(fos, StandardCharsets.UTF_8)) {
-                writer.append(line);
-            }
+            ));
         } catch (IOException e) {
             Log.e(TAG, "Failed to write channel data", e);
         }
