@@ -1,0 +1,214 @@
+package com.stancecoke.canableandroiddisplay;
+
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.hardware.usb.UsbDevice;
+import android.hardware.usb.UsbManager;
+import android.os.Build;
+import android.os.Bundle;
+import android.util.Log;
+import android.widget.Button;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
+
+import com.androidcan.CanDevice;
+import com.androidcan.CanDeviceFactory;
+import com.androidcan.CanDeviceInfo;
+import com.androidcan.CanFrame;
+import com.androidcan.ReceivedFrame;
+
+import java.io.IOException;
+import java.util.List;
+
+public class MainActivity extends AppCompatActivity {
+    private static final String TAG = "CanableDisplay";
+    private static final String ACTION_USB_PERMISSION = "com.stancecoke.canableandroiddisplay.USB_PERMISSION";
+    private static final int TARGET_CAN_ID = 0x00010203;
+    private static final int BITRATE = 250000;
+
+    private UsbManager usbManager;
+    private CanDevice canDevice;
+
+    private TextView tvStatus;
+    private TextView tvFrameId;
+    private TextView tvCh1;
+    private TextView tvCh2;
+    private TextView tvCh3;
+    private TextView tvCh4;
+    private TextView tvRaw;
+    private Button btnConnect;
+
+    private final BroadcastReceiver usbReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            if (ACTION_USB_PERMISSION.equals(action)) {
+                UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+                boolean granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false);
+                if (granted && device != null) {
+                    openDevice(device);
+                } else {
+                    tvStatus.setText("USB permission denied");
+                    Toast.makeText(MainActivity.this, "USB permission denied", Toast.LENGTH_SHORT).show();
+                }
+            } else if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(action)) {
+                refreshAndConnectIfAvailable();
+            }
+        }
+    };
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
+
+        tvStatus = findViewById(R.id.tvStatus);
+        tvFrameId = findViewById(R.id.tvFrameId);
+        tvCh1 = findViewById(R.id.tvCh1);
+        tvCh2 = findViewById(R.id.tvCh2);
+        tvCh3 = findViewById(R.id.tvCh3);
+        tvCh4 = findViewById(R.id.tvCh4);
+        tvRaw = findViewById(R.id.tvRaw);
+        btnConnect = findViewById(R.id.btnConnect);
+
+        btnConnect.setOnClickListener(v -> refreshAndConnectIfAvailable());
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(ACTION_USB_PERMISSION);
+        filter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
+        filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
+        ContextCompat.registerReceiver(this, usbReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED);
+        refreshAndConnectIfAvailable();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        unregisterReceiver(usbReceiver);
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        closeDevice();
+    }
+
+    private void refreshAndConnectIfAvailable() {
+        List<CanDeviceInfo> devices = CanDeviceFactory.enumerate(usbManager);
+        if (devices.isEmpty()) {
+            tvStatus.setText("No Canable / CandleLight device found");
+            return;
+        }
+
+        UsbDevice selected = devices.get(0).device;
+        if (usbManager.hasPermission(selected)) {
+            openDevice(selected);
+        } else {
+            requestPermission(selected);
+        }
+    }
+
+    private void requestPermission(UsbDevice device) {
+        tvStatus.setText("Requesting USB permission...");
+
+        int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_IMMUTABLE : 0;
+        PendingIntent pi = PendingIntent.getBroadcast(this, 0, new Intent(ACTION_USB_PERMISSION), flags);
+        usbManager.requestPermission(device, pi);
+    }
+
+    private void openDevice(UsbDevice usbDevice) {
+        closeDevice();
+
+        try {
+            canDevice = CanDeviceFactory.create(usbManager, usbDevice);
+            if (canDevice == null) {
+                tvStatus.setText("Unsupported USB adapter");
+                return;
+            }
+
+            canDevice.open();
+            canDevice.addFrameListener(this::handleFrame);
+            canDevice.start(BITRATE);
+
+            tvStatus.setText("Listening for 0x00010203");
+            Log.i(TAG, "Device opened: " + canDevice.getDeviceInfo());
+        } catch (IOException e) {
+            tvStatus.setText("Open failed: " + e.getMessage());
+            Log.e(TAG, "Failed to open device", e);
+        }
+    }
+
+    private void closeDevice() {
+        if (canDevice == null) return;
+        try {
+            canDevice.stop();
+        } catch (IOException ignored) {
+        }
+        canDevice.close();
+        canDevice = null;
+    }
+
+    private void handleFrame(ReceivedFrame receivedFrame) {
+        if (receivedFrame == null || receivedFrame.frame == null) {
+            return;
+        }
+
+        CanFrame frame = receivedFrame.frame;
+        if (frame.id != TARGET_CAN_ID || !frame.isExtended || frame.data == null) {
+            return;
+        }
+
+        if (frame.data.length != 8) {
+            runOnUiThread(() -> tvStatus.setText("Wrong payload length: " + frame.data.length));
+            return;
+        }
+
+        int ch1 = decodeInt16(frame.data[0], frame.data[1]);
+        int ch2 = decodeInt16(frame.data[2], frame.data[3]);
+        int ch3 = decodeInt16(frame.data[4], frame.data[5]);
+        int ch4 = decodeInt16(frame.data[6], frame.data[7]);
+
+        String raw = toHex(frame.data);
+
+        runOnUiThread(() -> {
+            tvFrameId.setText("ID: 0x" + Integer.toHexString(frame.id).toUpperCase());
+            tvCh1.setText("Ch1: " + ch1);
+            tvCh2.setText("Ch2: " + ch2);
+            tvCh3.setText("Ch3: " + ch3);
+            tvCh4.setText("Ch4: " + ch4);
+            tvRaw.setText("Payload: " + raw);
+            tvStatus.setText("Receiving 0x00010203");
+        });
+    }
+
+    private static int decodeInt16(byte hi, byte lo) {
+        int value = ((hi & 0xFF) << 8) | (lo & 0xFF);
+        if ((value & 0x8000) != 0) {
+            value -= 0x10000;
+        }
+        return value;
+    }
+
+    private static String toHex(byte[] data) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < data.length; i++) {
+            sb.append(String.format("%02X", data[i] & 0xFF));
+            if (i < data.length - 1) {
+                sb.append(' ');
+            }
+        }
+        return sb.toString();
+    }
+}
